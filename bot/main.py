@@ -77,7 +77,7 @@ async def _on_startup():
         logger.warning(f"[RESTORE] watch setup failed: {e}")
 
     if STRAT_ENABLE:
-        _strat = StrategyLoop(engine=engine, symbols=STRAT_SYMBOLS)
+        _strat = StrategyLoop(engine=engine)
         _strat_task = asyncio.create_task(_strat.run())
         logger.info("[MAIN] strategy loop started")
     else:
