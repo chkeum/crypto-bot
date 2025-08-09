@@ -12,8 +12,16 @@ else
 fi
 
 echo "[deploy] venv check..."
-if [[ ! -d ".venv" ]]; then python3 -m venv .venv; fi
+[[ -d .venv ]] || python3 -m venv .venv
 source .venv/bin/activate
+
+# >>> .env 로드: FastAPI 프로세스/tmux가 WEBHOOK_TOKEN 등 환경을 갖도록
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
 echo "[deploy] deps..."
 pip install -r requirements.txt -q
@@ -27,8 +35,7 @@ echo "[deploy] kill old tmux session: bot"
 tmux kill-session -t bot 2>/dev/null || true
 
 echo "[deploy] start tmux session: bot"
-# stdbuf로 라인버퍼 강제 + tee로 화면/파일 동시 기록
-tmux new-session -d -s bot "bash -lc 'export PYTHONUNBUFFERED=1; source .venv/bin/activate && stdbuf -oL -eL uvicorn bot.main:app --host 127.0.0.1 --port 8000 2>&1 | stdbuf -oL -eL tee -a \"$LOGFILE\"'"
+tmux new-session -d -s bot "bash -lc 'export PYTHONUNBUFFERED=1; source .venv/bin/activate; if [[ -f .env ]]; then set -a; source .env; set +a; fi; stdbuf -oL -eL uvicorn bot.main:app --host 127.0.0.1 --port 8000 2>&1 | stdbuf -oL -eL tee -a \"$LOGFILE\"'"
 
 echo "[deploy] health check..."
 ok=0

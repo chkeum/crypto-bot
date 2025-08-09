@@ -1,9 +1,10 @@
+import os
 from __future__ import annotations
 
 import asyncio
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from loguru import logger
 
 from .config import (
@@ -140,3 +141,12 @@ def http_orders(symbol: str = Query(...), _: None = Depends(_compat_auth_guard))
         raise HTTPException(500, f"fetch_open_orders failed: {e}")
     return {"symbol": symbol, "orders": ods}
 # --- end compat endpoints ---
+
+@app.middleware("http")
+async def _log_http(request: Request, call_next):
+    import time
+    t0 = time.time()
+    resp = await call_next(request)
+    dt = (time.time() - t0) * 1000
+    logger.info(f"[HTTP] {request.method} {request.url.path} -> {resp.status_code} ({dt:.1f}ms)")
+    return resp
