@@ -1,19 +1,26 @@
 from __future__ import annotations
+import asyncio
 from typing import Optional, Tuple
 from loguru import logger
 from .config import STRAT_SYMBOLS
 
-_enabled = False
+_enabled: bool = False
+_watch_task: Optional[asyncio.Task] = None
+
 
 def enable_restore_on_start() -> None:
+    """사용자가 원할 때만 복구 로직을 켬."""
     global _enabled
     _enabled = True
     logger.info("[RESTORE] bootstrap enabled")
 
-def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Optional[float]]:
+
+def _get_position_detail(
+    engine, symbol: str
+) -> Tuple[Optional[str], float, Optional[float]]:
     """
-    Prefer engine.get_position_detail if present; otherwise, read all positions via ccxt
-    and match by symbol/market id.
+    (side in {'long','short',None}, abs_size, entry_price_or_None) 반환.
+    engine.get_position_detail가 있으면 우선 사용. 없으면 ccxt 포지션 전체에서 매칭.
     """
     if hasattr(engine, "get_position_detail"):
         try:
@@ -44,7 +51,7 @@ def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Opt
     if not target:
         try:
             m = ex.market(symbol)
-            market_id = m.get('id')
+            market_id = m.get("id")
             for p in pos_list or []:
                 info = p.get("info") or {}
                 try:
@@ -68,6 +75,7 @@ def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Opt
         entry = None
     return side, abs(amt), entry
 
+
 def _has_reduce_only_orders(ex, symbol: str) -> bool:
     try:
         ods = ex.fetch_open_orders(symbol)
@@ -76,15 +84,17 @@ def _has_reduce_only_orders(ex, symbol: str) -> bool:
         return False
     for o in ods or []:
         info = o.get("info") or {}
-        ro = str(info.get("reduceOnly", info.get("reduce_only", ""))).lower() in ("true","1")
+        ro = str(info.get("reduceOnly", info.get("reduce_only", ""))).lower() in (
+            "true",
+            "1",
+        )
         if ro:
             return True
     return False
 
-def _restore_on_start(engine) -> None:
-    """
-    On restart, log current positions and warn if no reduceOnly SL/TP exist.
-    """
+
+def _restore_once(engine) -> None:
+    """현재 포지션 상태와 reduceOnly SL/TP 존재 여부를 점검하고 로그로 남김."""
     ex = getattr(engine, "ex", None)
     if not ex:
         logger.warning("[RESTORE] engine.ex missing; skip restore")
@@ -97,46 +107,62 @@ def _restore_on_start(engine) -> None:
             logger.info(f"[RESTORE]{sym} no position; nothing to restore.")
             continue
         has_ro = _has_reduce_only_orders(ex, sym)
-        logger.info(f"[RESTORE]{sym} side={side} size={size} entry={entry} reduceOnly_exists={has_ro}")
+        logger.info(
+            f"[RESTORE]{sym} side={side} size={size} entry={entry} reduceOnly_exists={has_ro}"
+        )
         if not has_ro:
-            logger.warning(f"[RESTORE]{sym} reduceOnly SL/TP not found. (manual check recommended)")
+            logger.warning(
+                f"[RESTORE]{sym} reduceOnly SL/TP not found. (manual check recommended)"
+            )
+
 
 def maybe_run_restore_on_start(app, engine) -> None:
+    """앱 기동 시 한 번만 복구 점검."""
     if _enabled:
         try:
-            _restore_on_start(engine)
+            _restore_once(engine)
         except Exception as e:
             logger.warning(f"[RESTORE] failed: {e}")
 
-# ===== periodic watch (optional) =======================================
-import asyncio
-try:
-    from .config import RESTORE_WATCH_ENABLED, RESTORE_WATCH_INTERVAL_SEC
-except Exception:
-    RESTORE_WATCH_ENABLED, RESTORE_WATCH_INTERVAL_SEC = False, 60
 
-async def _restore_watch_loop(engine, interval: int) -> None:
-    # 주기적으로 _restore_on_start()를 재사용 (idempotent)
-    # - reduceOnly가 이미 있으면 아무 것도 하지 않음
-    # - 없으면 AUTO_BRACKET 옵션에 따라 제출
-    while True:
-        try:
-            _restore_on_start(engine)
-        except Exception as e:
-            logger.warning(f"[RESTORE][watch] failed: {e}")
-        await asyncio.sleep(max(5, int(interval or 60)))
-
-def maybe_start_restore_watch(app, engine) -> None:
-    if not RESTORE_WATCH_ENABLED:
+def setup_restore_watch(app, engine, interval_sec: int = 60) -> None:
+    """
+    주기적(기본 60초)으로 _restore_once를 호출하는 백그라운드 워치.
+    app 이벤트에 등록하여 시작/종료를 관리.
+    """
+    if interval_sec <= 0:
+        logger.info("[RESTORE] periodic watch disabled (interval<=0)")
         return
 
-    async def _starter():
-        asyncio.create_task(_restore_watch_loop(engine, RESTORE_WATCH_INTERVAL_SEC))
-        logger.info(f"[RESTORE] watch started (interval={RESTORE_WATCH_INTERVAL_SEC}s)")
+    async def _startup():
+        if not _enabled:
+            return
+        global _watch_task
+        if _watch_task and not _watch_task.done():
+            return
 
-    try:
-        # FastAPI 이벤트 루프가 준비된 뒤에 태스크 시작
-        app.add_event_handler("startup", _starter)
-    except Exception as e:
-        logger.warning(f"[RESTORE] add watch handler failed: {e}")
-# =======================================================================
+        async def _loop():
+            while True:
+                try:
+                    # 블로킹 호출을 워커 스레드로
+                    await asyncio.to_thread(_restore_once, engine)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.warning(f"[RESTORE] periodic failed: {e}")
+                await asyncio.sleep(interval_sec)
+
+        _watch_task = asyncio.create_task(_loop(), name="restore_watch")
+
+    async def _shutdown():
+        global _watch_task
+        if _watch_task:
+            _watch_task.cancel()
+            try:
+                await _watch_task
+            except Exception:
+                pass
+            _watch_task = None
+
+    app.add_event_handler("startup", _startup)
+    app.add_event_handler("shutdown", _shutdown)
