@@ -116,12 +116,3 @@ def orders(symbol: str = Query(..., description="e.g., BTC/USDT")):
             "reduceOnly": reduce_only,
         })
     return {"open_orders": res}
-
-# --- debug endpoints mount ---
-try:
-    from .debug_endpoints import mount_debug
-    mount_debug(app, engine)
-except Exception as _e:
-    from loguru import logger as _logger
-    _logger.warning(f"[DEBUG] mount failed: {_e}")
-# -----------------------------

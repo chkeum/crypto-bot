@@ -1,50 +1,67 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="$HOME/crypto-bot"
-SESSION="bot"
-HOST="127.0.0.1"
-PORT="8000"
-VENV="$APP_DIR/.venv"
+# === 설정값(필요시 환경변수로 오버라이드) ===
+REPO="${REPO:-$HOME/crypto-bot}"
+SESSION="${SESSION:-bot}"
+HOST="${HOST:-127.0.0.1}"
+PORT="${PORT:-8000}"
+LOG_DIR="${LOG_DIR:-$REPO/logs}"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/bot-$(date +%Y%m%d).log}"
+TAIL_LINES="${TAIL_LINES:-200}"     # tail 시작 시 보여줄 라인 수
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-20}"  # 초
 
-echo "[deploy] repo: $APP_DIR"
-cd "$APP_DIR"
+echo "[deploy] repo: $REPO"
+cd "$REPO"
 
 echo "[deploy] git pull..."
-git fetch --all --prune
-git pull --ff-only origin main || {
-  echo "[deploy] main이 없으면 develop에서 가져옵니다"
-  git pull --ff-only origin develop || true
-}
+git pull --ff-only
 
 echo "[deploy] venv check..."
-if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
+if [ ! -d ".venv" ]; then
+  python3 -m venv .venv
 fi
-# shellcheck disable=SC1090
-source "$VENV/bin/activate"
+# shellcheck disable=SC1091
+source .venv/bin/activate
 
 echo "[deploy] deps..."
-pip install --upgrade pip >/dev/null
-if [ -f requirements.txt ]; then
-  pip install -r requirements.txt
+pip install -r requirements.txt
+
+echo "[deploy] prepare log dir: $LOG_DIR"
+mkdir -p "$LOG_DIR"
+touch "$LOG_FILE"
+
+# 이미 떠 있는 세션 정리
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "[deploy] kill old tmux session: $SESSION"
+  tmux kill-session -t "$SESSION"
 fi
 
-echo "[deploy] restart tmux session: $SESSION"
-tmux kill-session -t "$SESSION" 2>/dev/null || true
-tmux new -s "$SESSION" -d "cd $APP_DIR && source $VENV/bin/activate && uvicorn bot.main:app --host $HOST --port $PORT"
+# uvicorn + tee 로 로그 파일 기록
+# stdbuf로 줄단위 즉시 flush
+RUN_CMD="bash -lc 'cd $REPO && source .venv/bin/activate && stdbuf -oL -eL uvicorn bot.main:app --host $HOST --port $PORT 2>&1 | tee -a \"$LOG_FILE\"'"
 
+echo "[deploy] start tmux session: $SESSION"
+tmux new-session -d -s "$SESSION" "$RUN_CMD"
+
+# 헬스 체크
 echo "[deploy] health check..."
-for i in {1..20}; do
-  sleep 0.5
-  if curl -sf "http://$HOST:$PORT/health" >/dev/null; then
-    echo "[deploy] OK: http://$HOST:$PORT/health"
+ok=false
+for i in $(seq 1 "$HEALTH_TIMEOUT"); do
+  if curl -fsS "http://$HOST:$PORT/health" >/dev/null 2>&1; then
+    ok=true
     break
   fi
-  if [ "$i" -eq 20 ]; then
-    echo "[deploy] WARN: /health 응답 없음(로그 확인 필요)"
-  fi
+  sleep 1
 done
 
-echo "[deploy] tail logs (Ctrl+C로 종료)"
-tmux attach -t "$SESSION"
+if [ "$ok" = true ]; then
+  echo "[deploy] OK: http://$HOST:$PORT/health"
+else
+  echo "[deploy] WARN: health check failed (timeout ${HEALTH_TIMEOUT}s). 로그를 확인하세요."
+fi
+
+echo "[deploy] log file: $LOG_FILE"
+echo "[deploy] tail -f (Ctrl+C로 종료; 봇은 계속 동작)"
+echo "============================================================"
+tail -n "$TAIL_LINES" -f "$LOG_FILE"
