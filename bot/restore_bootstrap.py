@@ -107,3 +107,36 @@ def maybe_run_restore_on_start(app, engine) -> None:
             _restore_on_start(engine)
         except Exception as e:
             logger.warning(f"[RESTORE] failed: {e}")
+
+# ===== periodic watch (optional) =======================================
+import asyncio
+try:
+    from .config import RESTORE_WATCH_ENABLED, RESTORE_WATCH_INTERVAL_SEC
+except Exception:
+    RESTORE_WATCH_ENABLED, RESTORE_WATCH_INTERVAL_SEC = False, 60
+
+async def _restore_watch_loop(engine, interval: int) -> None:
+    # 주기적으로 _restore_on_start()를 재사용 (idempotent)
+    # - reduceOnly가 이미 있으면 아무 것도 하지 않음
+    # - 없으면 AUTO_BRACKET 옵션에 따라 제출
+    while True:
+        try:
+            _restore_on_start(engine)
+        except Exception as e:
+            logger.warning(f"[RESTORE][watch] failed: {e}")
+        await asyncio.sleep(max(5, int(interval or 60)))
+
+def maybe_start_restore_watch(app, engine) -> None:
+    if not RESTORE_WATCH_ENABLED:
+        return
+
+    async def _starter():
+        asyncio.create_task(_restore_watch_loop(engine, RESTORE_WATCH_INTERVAL_SEC))
+        logger.info(f"[RESTORE] watch started (interval={RESTORE_WATCH_INTERVAL_SEC}s)")
+
+    try:
+        # FastAPI 이벤트 루프가 준비된 뒤에 태스크 시작
+        app.add_event_handler("startup", _starter)
+    except Exception as e:
+        logger.warning(f"[RESTORE] add watch handler failed: {e}")
+# =======================================================================

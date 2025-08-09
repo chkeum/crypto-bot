@@ -1,4 +1,5 @@
 from bot.restore_bootstrap import enable_restore_on_start
+from .restore_bootstrap import maybe_start_restore_watch
 enable_restore_on_start()
 import asyncio
 from fastapi import FastAPI, Header, HTTPException
@@ -30,6 +31,7 @@ except Exception as _e:
 try:
     from .restore_bootstrap import maybe_run_restore_on_start
     maybe_run_restore_on_start(app, engine)
+    maybe_start_restore_watch(app, engine)
 except Exception as _e:
     from loguru import logger as _logger
     _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
@@ -143,6 +145,7 @@ except Exception as _e:
 try:
     from .restore_bootstrap import maybe_run_restore_on_start
     maybe_run_restore_on_start(app, engine)
+    maybe_start_restore_watch(app, engine)
 except Exception as _e:
     from loguru import logger as _logger
     _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
