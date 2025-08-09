@@ -44,16 +44,7 @@ if [ -z "$PATCH_FILE" ]; then
   echo "파일: $TMP"
   echo "====================================================="
   : > "$TMP"
-  EDITOR_CMD=${EDITOR:-vim}
-  if command -v "$EDITOR_CMD" >/dev/null 2>&1; then
-    "$EDITOR_CMD" "$TMP"
-  elif command -v vim >/dev/null 2>&1; then
-    vim "$TMP"
-  elif command -v nano >/dev/null 2>&1; then
-    nano "$TMP"
-  else
-    vi "$TMP"
-  fi
+  # 선호 에디터
   if command -v nano >/dev/null 2>&1; then
     nano "$TMP"
   else
