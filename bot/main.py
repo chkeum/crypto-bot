@@ -111,42 +111,46 @@ except NameError:
     except Exception:
         WEBHOOK_TOKEN = None  # type: ignore
 
-def _compat_auth_guard(x_token: str | None = Header(default=None)) -> None:
-    if WEBHOOK_TOKEN and x_token != WEBHOOK_TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
-# 내부 로직 재사용: 현재 포지션 파악
-from .restore_bootstrap import _get_position_detail as _pos_detail  # noqa
-
-@app.get("/status")
-def http_status(symbols: str | None = Query(None), _: None = Depends(_compat_auth_guard)):
-    ex = getattr(engine, "ex", None)
-    if ex is None:
-        raise HTTPException(500, "exchange not ready")
-    syms = [s.strip() for s in (symbols or STRAT_SYMBOLS).split(",") if s.strip()]
-    data = []
-    for sym in syms:
-        side, size, entry = _pos_detail(engine, sym)
-        data.append({"symbol": sym, "side": side, "contracts": size, "entryPrice": entry})
-    return {"symbols": syms, "positions": data}
-
-@app.get("/orders")
-def http_orders(symbol: str = Query(...), _: None = Depends(_compat_auth_guard)):
-    ex = getattr(engine, "ex", None)
-    if ex is None:
-        raise HTTPException(500, "exchange not ready")
+def _compat_auth_guard(request: Request,
+                       x_token: str | None = Header(default=None),
+                       token: str | None = Query(default=None)) -> None:
+    """
+    Auth policy:
+      - WEBHOOK_TOKEN 비어있으면 모두 허용
+      - ALLOW_LOCAL_NOAUTH=1 이고 클라이언트가 로컬/사설 IP면 허용
+      - 아니면 X-Token 헤더 또는 ?token= 값이 WEBHOOK_TOKEN 과 같아야 허용
+    """
+    import os
     try:
-        ods = ex.fetch_open_orders(symbol)
-    except Exception as e:
-        raise HTTPException(500, f"fetch_open_orders failed: {e}")
-    return {"symbol": symbol, "orders": ods}
-# --- end compat endpoints ---
+        from .config import WEBHOOK_TOKEN  # 있으면 사용
+    except Exception:
+        WEBHOOK_TOKEN = os.getenv("WEBHOOK_TOKEN")  # 없으면 env
 
-@app.middleware("http")
-async def _log_http(request: Request, call_next):
-    import time
-    t0 = time.time()
-    resp = await call_next(request)
-    dt = (time.time() - t0) * 1000
-    logger.info(f"[HTTP] {request.method} {request.url.path} -> {resp.status_code} ({dt:.1f}ms)")
-    return resp
+    allow_local = os.getenv("ALLOW_LOCAL_NOAUTH", "1").lower() in ("1","true","yes","y")  # 기본 허용
+
+    host = request.client.host if request and request.client else None
+    def _is_local(h: str | None) -> bool:
+        if not h: return False
+        if h in ("127.0.0.1","::1","localhost"): return True
+        parts = h.split(".")
+        if len(parts)==4:
+            a,b,*_ = parts
+            if a=="10": return True
+            if a=="192" and b=="168": return True
+            if a=="172":
+                try:
+                    b=int(b)
+                    if 16<=b<=31: return True
+                except Exception:
+                    pass
+        return False
+
+    if not WEBHOOK_TOKEN:
+        return
+    if allow_local and _is_local(host):
+        return
+
+    supplied = x_token or token
+    if supplied != WEBHOOK_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
