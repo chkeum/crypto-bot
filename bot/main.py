@@ -1,152 +1,122 @@
-from bot.restore_bootstrap import enable_restore_on_start
-from .restore_bootstrap import maybe_start_restore_watch
-enable_restore_on_start()
+# bot/main.py
+from __future__ import annotations
+
 import asyncio
-from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
-from typing import Optional, Literal
+from typing import Optional
+
+from fastapi import FastAPI
 from loguru import logger
-from .restore_bootstrap import enable_restore_on_start
 
 from .config import (
-  START_MODE, WEBHOOK_TOKEN, EXCHANGE_ID, IS_TESTNET,
-  API_KEY, API_SECRET, DEFAULT_LEVERAGE, STRAT_ENABLE, STRAT_SYMBOLS
+    START_MODE,
+    API_KEY,
+    API_SECRET,
+    IS_TESTNET,
+    DEFAULT_LEVERAGE,
+    STRAT_ENABLE,
+    STRAT_SYMBOLS,
+    WEBHOOK_TOKEN,  # 사용은 debug_endpoints에서 인증에 활용
 )
+
 from .exchange_paper import PaperExchange
 from .exchange_binance import BinanceUSDMExchange
 from .strategy_loop import StrategyLoop
-from typing import List
-from fastapi import Query
+
+# restore 부트스트랩/워처
+from .restore_bootstrap import (
+    enable_restore_on_start,
+    maybe_run_restore_on_start,
+    setup_restore_watch,
+)
+
+# 선택적: 디버그 엔드포인트 마운트
+try:
+    from .debug_endpoints import mount_debug
+except Exception as _e:
+    mount_debug = None
+    logger.warning(f"[DEBUG] debug_endpoints not available: {_e}")
+
+
+# -------------------------
+# FastAPI 앱 & 엔진 초기화
+# -------------------------
+enable_restore_on_start()  # 부트스트랩 플래그 ON (한 번만)
 
 app = FastAPI(title="Crypto Bot")
-engine = PaperExchange() if START_MODE=="PAPER" else BinanceUSDMExchange(API_KEY, API_SECRET, is_testnet=IS_TESTNET, default_leverage=DEFAULT_LEVERAGE)
 
-# --- debug & restore mounts ---
-try:
-    from .debug_endpoints import mount_debug
-    mount_debug(app, engine)
-except Exception as _e:
-    from loguru import logger as _logger
-    _logger.warning(f"[DEBUG] mount failed: {_e}")
-try:
-    from .restore_bootstrap import maybe_run_restore_on_start
-    maybe_run_restore_on_start(app, engine)
-    maybe_start_restore_watch(app, engine)
-except Exception as _e:
-    from loguru import logger as _logger
-    _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
-# --------------------------------
+# 거래소 엔진 생성 (Paper 또는 Binance USDM)
+engine = (
+    PaperExchange()
+    if START_MODE == "PAPER"
+    else BinanceUSDMExchange(
+        api_key=API_KEY,
+        api_secret=API_SECRET,
+        is_testnet=IS_TESTNET,
+        default_leverage=DEFAULT_LEVERAGE,
+    )
+)
 
-class Signal(BaseModel):
-    action: Literal["open","close"]
-    symbol: str
-    side: Optional[Literal["long","short"]] = None
-    qty_usd: Optional[float] = None
-    leverage: Optional[int] = None
-    strategy: Optional[str] = None
+# 디버그 엔드포인트 1회만 마운트
+if mount_debug is not None:
+    try:
+        mount_debug(app, engine)
+    except Exception as _e:
+        logger.warning(f"[DEBUG] mount failed: {_e}")
 
+
+# -------------------------
+# 헬스체크
+# -------------------------
 @app.get("/health")
-def health(): 
-    return {"ok": True, "mode": START_MODE, "exchange": EXCHANGE_ID}
+def health():
+    return {"ok": True}
 
-@app.post("/signal")
-def signal(payload: Signal, x_auth_token: Optional[str] = Header(None)):
-    # 외부 웹훅을 쓸 때만 사용 (내부전략에선 필요 X)
-    if WEBHOOK_TOKEN and x_auth_token != WEBHOOK_TOKEN:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    if payload.action=="open":
-        if not payload.side: raise HTTPException(400, "side required")
-        if not payload.qty_usd or payload.qty_usd<=0: raise HTTPException(400, "qty_usd > 0 required")
-        price = engine.fetch_price(payload.symbol)
-        base = payload.qty_usd / max(price, 1e-9)
-        res = engine.open_market(payload.symbol, payload.side, base, leverage=payload.leverage)
-        return {"ok":True, "price":price, "base_amount":base, "exchange":res}
-    elif payload.action=="close":
-        res = engine.close_all(payload.symbol); return {"ok":True, "exchange":res}
-    else:
-        raise HTTPException(400, "invalid action")
 
-strategy_task=None
-strategy_loop=None
+# -------------------------
+# 전략 루프 관리
+# -------------------------
+_strat: Optional[StrategyLoop] = None
+_strat_task: Optional[asyncio.Task] = None
+
 
 @app.on_event("startup")
-async def _startup():
-    global strategy_task, strategy_loop
+async def _on_startup():
+    global _strat, _strat_task
+
+    # 재기동시 포지션 복원 점검 (한 번)
+    try:
+        maybe_run_restore_on_start(app, engine)
+    except Exception as e:
+        logger.warning(f"[RESTORE] bootstrap call failed: {e}")
+
+    # 주기 감시 워처 등록 (RESTORE_WATCH_INTERVAL 이 설정되어 있으면 동작)
+    try:
+        setup_restore_watch(app, engine)
+    except Exception as e:
+        logger.warning(f"[RESTORE] watch setup failed: {e}")
+
+    # 전략 루프 시작
     if STRAT_ENABLE:
-        strategy_loop = StrategyLoop(engine)
-        strategy_task = asyncio.create_task(strategy_loop.run())
+        _strat = StrategyLoop(engine=engine, symbols=STRAT_SYMBOLS)
+        _strat_task = asyncio.create_task(_strat.run())
+        logger.info("[MAIN] strategy loop started")
+    else:
+        logger.info("[MAIN] strategy disabled (STRAT_ENABLE=false)")
+
 
 @app.on_event("shutdown")
-async def _shutdown():
-    global strategy_task, strategy_loop
-    if strategy_loop: await strategy_loop.stop()
+async def _on_shutdown():
+    global _strat, _strat_task
 
-
-def _get_side_and_size(engine, symbol: str):
-    side, size = None, 0.0
-    # PAPER
-    if hasattr(engine, "positions"):
-        pos = getattr(engine, "positions", {}).get(symbol) or {}
-        amt = float(pos.get("amount", 0.0))
-        size = abs(amt)
-        side = "long" if amt > 0 else ("short" if amt < 0 else None)
-        return side, size
-    # BINANCE
-    if hasattr(engine, "_get_position_size"):
+    # 전략 루프 정리
+    if _strat_task:
         try:
-            s = engine._get_position_size(symbol)
-            size = abs(s)
-            side = "long" if s > 0 else ("short" if s < 0 else None)
+            if _strat and hasattr(_strat, "stop"):
+                _strat.stop()
+            _strat_task.cancel()
         except Exception:
             pass
-    return side, size
+        _strat_task = None
+        _strat = None
+        logger.info("[MAIN] strategy loop stopped")
 
-@app.get("/status")
-def status(symbols: Optional[str] = None):
-    # 예: /status?symbols=BTC/USDT,ETH/USDT  (없으면 STRAT_SYMBOLS 사용)
-    syms = [s.strip() for s in (symbols or STRAT_SYMBOLS).split(",") if s.strip()]
-    out = []
-    for sym in syms:
-        side, size = _get_side_and_size(engine, sym)
-        out.append({"symbol": sym, "side": side, "size": size})
-    return {"positions": out}
-
-@app.get("/orders")
-def orders(symbol: str = Query(..., description="e.g., BTC/USDT")):
-    # BINANCE 모드에서 미체결 주문(특히 reduceOnly 브래킷) 확인
-    if not hasattr(engine, "exchange"):
-        return {"open_orders": []}
-    try:
-        opens = engine.exchange.fetch_open_orders(symbol)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"fetch_open_orders failed: {e}")
-    res = []
-    for o in opens:
-        info = o.get("info", {})
-        reduce_only = str(info.get("reduceOnly", info.get("reduce_only", ""))).lower() in ["true", "1"]
-        res.append({
-            "id": o.get("id"),
-            "type": o.get("type"),
-            "side": o.get("side"),
-            "status": o.get("status"),
-            "price": o.get("price"),
-            "stopPrice": info.get("stopPrice"),
-            "reduceOnly": reduce_only,
-        })
-    return {"open_orders": res}
-
-# --- debug & restore mounts ---
-try:
-    from .debug_endpoints import mount_debug
-    mount_debug(app, engine)
-except Exception as _e:
-    from loguru import logger as _logger
-    _logger.warning(f"[DEBUG] mount failed: {_e}")
-try:
-    from .restore_bootstrap import maybe_run_restore_on_start
-    maybe_run_restore_on_start(app, engine)
-    maybe_start_restore_watch(app, engine)
-except Exception as _e:
-    from loguru import logger as _logger
-    _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
-# --------------------------------

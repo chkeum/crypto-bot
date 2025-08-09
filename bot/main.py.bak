@@ -1,11 +1,12 @@
 from bot.restore_bootstrap import enable_restore_on_start
+from .restore_bootstrap import maybe_start_restore_watch, setup_restore_watch
 enable_restore_on_start()
 import asyncio
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Literal
 from loguru import logger
-from .restore_bootstrap import enable_restore_on_start
+from .restore_bootstrap import enable_restore_on_start, setup_restore_watch
 
 from .config import (
   START_MODE, WEBHOOK_TOKEN, EXCHANGE_ID, IS_TESTNET,
@@ -28,8 +29,9 @@ except Exception as _e:
     from loguru import logger as _logger
     _logger.warning(f"[DEBUG] mount failed: {_e}")
 try:
-    from .restore_bootstrap import maybe_run_restore_on_start
+    from .restore_bootstrap import maybe_run_restore_on_start, setup_restore_watch
     maybe_run_restore_on_start(app, engine)
+    maybe_start_restore_watch(app, engine)
 except Exception as _e:
     from loguru import logger as _logger
     _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
@@ -133,12 +135,18 @@ def orders(symbol: str = Query(..., description="e.g., BTC/USDT")):
         })
     return {"open_orders": res}
 
-# --- debug endpoints mount ---
+# --- debug & restore mounts ---
 try:
     from .debug_endpoints import mount_debug
     mount_debug(app, engine)
 except Exception as _e:
-    from loguru import logger
-from .restore_bootstrap import enable_restore_on_start as _logger
+    from loguru import logger as _logger
     _logger.warning(f"[DEBUG] mount failed: {_e}")
-# -----------------------------
+try:
+    from .restore_bootstrap import maybe_run_restore_on_start, setup_restore_watch
+    maybe_run_restore_on_start(app, engine)
+    maybe_start_restore_watch(app, engine)
+except Exception as _e:
+    from loguru import logger as _logger
+    _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
+# --------------------------------
