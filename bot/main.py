@@ -99,7 +99,8 @@ async def _on_shutdown():
         logger.info("[MAIN] strategy loop stopped")
 
 # --- compat endpoints: /status, /orders (for existing scripts) ---
-from fastapi import Depends, Header
+from fastapi import Query, HTTPException
+from fastapi import Depends, Header, Query, HTTPException
 
 try:
     WEBHOOK_TOKEN  # may already be imported
