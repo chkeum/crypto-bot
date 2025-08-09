@@ -16,3 +16,7 @@ curl -s "http://127.0.0.1:8000/orders?symbol=BTC/USDT"
 
 # ip 확인
 curl ifconfig.me
+
+# 파일 압축
+tar czf /tmp/crypto_bot_pyfiles.tar.gz bot/*.py scripts/*.sh
+cp /tmp/crypto_bot_pyfiles.tar.gz /mnt/c/Users/금찬현/Desktop/

@@ -1,50 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 
-APP_DIR="$HOME/crypto-bot"
-SESSION="bot"
-HOST="127.0.0.1"
-PORT="8000"
-VENV="$APP_DIR/.venv"
-
-echo "[deploy] repo: $APP_DIR"
-cd "$APP_DIR"
-
-echo "[deploy] git pull..."
-git fetch --all --prune
-git pull --ff-only origin main || {
-  echo "[deploy] main이 없으면 develop에서 가져옵니다"
-  git pull --ff-only origin develop || true
-}
+echo "[deploy] repo: $ROOT"
+if [ "${SKIP_GIT_PULL:-0}" = "1" ]; then
+  echo "[deploy] skip git pull (SKIP_GIT_PULL=1)"
+else
+  echo "[deploy] git pull..."
+  git pull --ff-only
+fi
 
 echo "[deploy] venv check..."
-if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
-fi
-# shellcheck disable=SC1090
-source "$VENV/bin/activate"
+if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+source .venv/bin/activate
 
 echo "[deploy] deps..."
-pip install --upgrade pip >/dev/null
-if [ -f requirements.txt ]; then
-  pip install -r requirements.txt
-fi
+pip install -r requirements.txt -q
 
-echo "[deploy] restart tmux session: $SESSION"
-tmux kill-session -t "$SESSION" 2>/dev/null || true
-tmux new -s "$SESSION" -d "cd $APP_DIR && source $VENV/bin/activate && uvicorn bot.main:app --host $HOST --port $PORT"
+LOGDIR="$ROOT/logs"
+mkdir -p "$LOGDIR"
+LOGFILE="$LOGDIR/bot-$(date +%Y%m%d).log"
+echo "[deploy] prepare log dir: $LOGDIR"
+
+echo "[deploy] kill old tmux session: bot"
+tmux kill-session -t bot 2>/dev/null || true
+
+echo "[deploy] start tmux session: bot"
+tmux new-session -d -s bot "bash -lc 'source .venv/bin/activate && uvicorn bot.main:app --host 127.0.0.1 --port 8000 2>&1 | tee -a \"$LOGFILE\"'"
 
 echo "[deploy] health check..."
-for i in {1..20}; do
-  sleep 0.5
-  if curl -sf "http://$HOST:$PORT/health" >/dev/null; then
-    echo "[deploy] OK: http://$HOST:$PORT/health"
+ok=0
+for i in {1..30}; do
+  if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
+    echo "[deploy] OK: http://127.0.0.1:8000/health"
+    ok=1
     break
   fi
-  if [ "$i" -eq 20 ]; then
-    echo "[deploy] WARN: /health 응답 없음(로그 확인 필요)"
-  fi
+  sleep 1
 done
 
-echo "[deploy] tail logs (Ctrl+C로 종료)"
-tmux attach -t "$SESSION"
+if [ "$ok" != "1" ]; then
+  echo "[deploy] health check FAILED"
+  echo "----- last 200 log lines -----"
+  tail -n 200 "$LOGFILE" || true
+  exit 1
+fi
+
+echo "[deploy] log file: $LOGFILE"
+echo "[deploy] tail -f (Ctrl+C로 종료; 봇은 계속 동작)"
+echo "============================================================"
+tail -f "$LOGFILE"
