@@ -1,12 +1,18 @@
 import asyncio
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Literal, List
+from typing import Optional, Literal
 from loguru import logger
 
 from .config import (
-    START_MODE, WEBHOOK_TOKEN, EXCHANGE_ID, IS_TESTNET,
-    API_KEY, API_SECRET, DEFAULT_LEVERAGE, STRAT_ENABLE, STRAT_SYMBOLS
+    START_MODE,
+    WEBHOOK_TOKEN,
+    IS_TESTNET,
+    API_KEY,
+    API_SECRET,
+    DEFAULT_LEVERAGE,
+    STRAT_ENABLE,
+    STRAT_SYMBOLS,
 )
 from .exchange_paper import PaperExchange
 from .exchange_binance import BinanceUSDMExchange
@@ -14,31 +20,38 @@ from .strategy_loop import StrategyLoop
 
 # restore 기능 활성화
 from .restore_bootstrap import enable_restore_on_start
+
 enable_restore_on_start()
 
 app = FastAPI(title="Crypto Bot")
 
 # 엔진 초기화
-engine = PaperExchange() if START_MODE == "PAPER" else BinanceUSDMExchange(
-    API_KEY, API_SECRET,
-    is_testnet=IS_TESTNET,
-    default_leverage=DEFAULT_LEVERAGE
+engine = (
+    PaperExchange()
+    if START_MODE == "PAPER"
+    else BinanceUSDMExchange(
+        API_KEY, API_SECRET, is_testnet=IS_TESTNET, default_leverage=DEFAULT_LEVERAGE
+    )
 )
 
 # debug endpoints mount
 try:
     from .debug_endpoints import mount_debug
+
     mount_debug(app, engine)
 except Exception as _e:
     from loguru import logger as _logger
+
     _logger.warning(f"[DEBUG] mount failed: {_e}")
 
 # restore 부트스트랩 실행
 try:
     from .restore_bootstrap import maybe_run_restore_on_start
+
     maybe_run_restore_on_start(app, engine)
 except Exception as _e:
     from loguru import logger as _logger
+
     _logger.warning(f"[RESTORE] bootstrap call failed: {_e}")
 
 
@@ -107,4 +120,3 @@ async def start_strategy():
 @app.on_event("shutdown")
 async def shutdown():
     logger.info("Shutting down...")
-

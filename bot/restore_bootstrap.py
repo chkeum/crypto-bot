@@ -5,12 +5,16 @@ from .config import STRAT_SYMBOLS
 
 _enabled = False
 
+
 def enable_restore_on_start() -> None:
     global _enabled
     _enabled = True
     logger.info("[RESTORE] bootstrap enabled")
 
-def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Optional[float]]:
+
+def _get_position_detail(
+    engine, symbol: str
+) -> Tuple[Optional[str], float, Optional[float]]:
     """
     Prefer engine.get_position_detail if present; otherwise, read all positions via ccxt
     and match by symbol/market id.
@@ -44,7 +48,7 @@ def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Opt
     if not target:
         try:
             m = ex.market(symbol)
-            market_id = m.get('id')
+            market_id = m.get("id")
             for p in pos_list or []:
                 info = p.get("info") or {}
                 try:
@@ -68,6 +72,7 @@ def _get_position_detail(engine, symbol: str) -> Tuple[Optional[str], float, Opt
         entry = None
     return side, abs(amt), entry
 
+
 def _has_reduce_only_orders(ex, symbol: str) -> bool:
     try:
         ods = ex.fetch_open_orders(symbol)
@@ -76,10 +81,14 @@ def _has_reduce_only_orders(ex, symbol: str) -> bool:
         return False
     for o in ods or []:
         info = o.get("info") or {}
-        ro = str(info.get("reduceOnly", info.get("reduce_only", ""))).lower() in ("true","1")
+        ro = str(info.get("reduceOnly", info.get("reduce_only", ""))).lower() in (
+            "true",
+            "1",
+        )
         if ro:
             return True
     return False
+
 
 def _restore_on_start(engine) -> None:
     """
@@ -97,9 +106,14 @@ def _restore_on_start(engine) -> None:
             logger.info(f"[RESTORE]{sym} no position; nothing to restore.")
             continue
         has_ro = _has_reduce_only_orders(ex, sym)
-        logger.info(f"[RESTORE]{sym} side={side} size={size} entry={entry} reduceOnly_exists={has_ro}")
+        logger.info(
+            f"[RESTORE]{sym} side={side} size={size} entry={entry} reduceOnly_exists={has_ro}"
+        )
         if not has_ro:
-            logger.warning(f"[RESTORE]{sym} reduceOnly SL/TP not found. (manual check recommended)")
+            logger.warning(
+                f"[RESTORE]{sym} reduceOnly SL/TP not found. (manual check recommended)"
+            )
+
 
 def maybe_run_restore_on_start(app, engine) -> None:
     if _enabled:
