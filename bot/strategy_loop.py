@@ -95,6 +95,11 @@ class StrategyLoop:
         self.risk_equity_min = float(os.getenv("RISK_EQUITY_MIN_USD", "5"))
         self.risk_equity_max = float(os.getenv("RISK_EQUITY_MAX_USD", "50"))
 
+        logger.info(
+          f"[RISK] dynamic={'ON' if self.risk_dyn_enable else 'OFF'} "
+          f"pct={self.risk_equity_pct} min={self.risk_equity_min} max={self.risk_equity_max}"
+        )
+
     # ---- utils ----
     def _get_engine_position_side(self, symbol: str) -> Optional[str]:
         if hasattr(self.engine, "positions"):  # Paper
@@ -280,6 +285,20 @@ class StrategyLoop:
                     pass
             return
         self.last_bar_ts[symbol] = l["ts"]
+
+# --- add: show dynamic risk each new bar (even without entry) ---
+if self.risk_dyn_enable and STRAT_LOG_EVERY_BAR:
+    try:
+        stop_distance_preview = l["atr"] * STRAT_ATR_MULT
+        dyn = await self._get_dynamic_risk_usd()
+        if dyn is not None and stop_distance_preview > 0:
+            est_qty = max(dyn / stop_distance_preview, MIN_BASE_QTY)
+            logger.info(
+                f"[RISK] {symbol} dyn={dyn:.4f} stop={stop_distance_preview:.6f} est_qty~{est_qty:.6f}"
+            )
+    except Exception as e:
+        logger.warning(f"[RISK] preview failed: {e}")
+# --- end add ---
 
         price = l["close"]
         side_now = self._get_engine_position_side(symbol)
