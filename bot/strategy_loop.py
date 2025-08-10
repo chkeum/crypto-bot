@@ -47,9 +47,7 @@ def ema_series(vals: List[float], length: int) -> List[float]:
     return out
 
 
-def compute_atr(
-    h: List[float], l: List[float], c: List[float], length: int
-) -> List[float]:
+def compute_atr(h: List[float], l: List[float], c: List[float], length: int) -> List[float]:
     trs = []
     prev = c[0]
     for i in range(1, len(c)):
@@ -75,6 +73,7 @@ class StrategyLoop:
         self.entry_price = {}
         self.sl_price = {}
         self.tp_price = {}
+
         # data-only client (ccxt)
         self.data_ex = getattr(ccxt, DATA_EXCHANGE_ID)({"enableRateLimit": True})
         try:
@@ -85,6 +84,7 @@ class StrategyLoop:
             self.data_ex.load_markets()
         except Exception:
             pass
+
         self.symbols = [s.strip() for s in STRAT_SYMBOLS.split(",") if s.strip()]
 
         # ----- Dynamic risk knobs (from env; safe defaults) -------------------
@@ -96,8 +96,8 @@ class StrategyLoop:
         self.risk_equity_max = float(os.getenv("RISK_EQUITY_MAX_USD", "50"))
 
         logger.info(
-          f"[RISK] dynamic={'ON' if self.risk_dyn_enable else 'OFF'} "
-          f"pct={self.risk_equity_pct} min={self.risk_equity_min} max={self.risk_equity_max}"
+            f"[RISK] dynamic={'ON' if self.risk_dyn_enable else 'OFF'} "
+            f"pct={self.risk_equity_pct} min={self.risk_equity_min} max={self.risk_equity_max}"
         )
 
     # ---- utils ----
@@ -217,11 +217,7 @@ class StrategyLoop:
         eslow = ema_series(c, STRAT_EMA_SLOW)
         atr = compute_atr(h, l, c, STRAT_ATR_LEN)
         atr_ma = sum(atr[-STRAT_ATR_MA_LEN - 1 : -1]) / max(1, STRAT_ATR_MA_LEN)
-        vol_ok = (
-            v[i]
-            > (sum(v[-(STRAT_VOLMA_LEN + 1) : -1]) / max(1, STRAT_VOLMA_LEN))
-            * STRAT_VOL_MULT
-        )
+        vol_ok = v[i] > (sum(v[-(STRAT_VOLMA_LEN + 1) : -1]) / max(1, STRAT_VOLMA_LEN)) * STRAT_VOL_MULT
         hh = max(h[-(STRAT_BREAKOUT_LEN + 1) : -1])
         ll = min(l[-(STRAT_BREAKOUT_LEN + 1) : -1])
         brk_long = c[i] > hh
@@ -286,19 +282,18 @@ class StrategyLoop:
             return
         self.last_bar_ts[symbol] = l["ts"]
 
-# --- add: show dynamic risk each new bar (even without entry) ---
-if self.risk_dyn_enable and STRAT_LOG_EVERY_BAR:
-    try:
-        stop_distance_preview = l["atr"] * STRAT_ATR_MULT
-        dyn = await self._get_dynamic_risk_usd()
-        if dyn is not None and stop_distance_preview > 0:
-            est_qty = max(dyn / stop_distance_preview, MIN_BASE_QTY)
-            logger.info(
-                f"[RISK] {symbol} dyn={dyn:.4f} stop={stop_distance_preview:.6f} est_qty~{est_qty:.6f}"
-            )
-    except Exception as e:
-        logger.warning(f"[RISK] preview failed: {e}")
-# --- end add ---
+        # --- dynamic risk preview per new bar (even without entry) -----------
+        if self.risk_dyn_enable and STRAT_LOG_EVERY_BAR:
+            try:
+                stop_distance_preview = l["atr"] * STRAT_ATR_MULT
+                dyn = await self._get_dynamic_risk_usd()
+                if dyn is not None and stop_distance_preview > 0:
+                    est_qty = max(dyn / stop_distance_preview, MIN_BASE_QTY)
+                    logger.info(
+                        f"[RISK] {symbol} dyn={dyn:.4f} stop={stop_distance_preview:.6f} est_qty~{est_qty:.6f}"
+                    )
+            except Exception as e:
+                logger.warning(f"[RISK] preview failed: {e}")
 
         price = l["close"]
         side_now = self._get_engine_position_side(symbol)
@@ -413,9 +408,7 @@ if self.risk_dyn_enable and STRAT_LOG_EVERY_BAR:
                     reasons.append("no_HTF_trend")
                 if not (l["brk_long"] or l["brk_short"]):
                     reasons.append("no_breakout")
-                logger.info(
-                    f"[NOENTRY] {symbol} reasons={','.join(reasons) or 'filtered'}"
-                )
+                logger.info(f"[NOENTRY] {symbol} reasons={','.join(reasons) or 'filtered'}")
 
         # if flat -> clear leftover reduceOnly orders
         if hasattr(self.engine, "cancel_reduces_if_flat"):
@@ -434,6 +427,6 @@ if self.risk_dyn_enable and STRAT_LOG_EVERY_BAR:
                 await self._maybe_eval_symbol(s)
             await asyncio.sleep(STRAT_POLL_SEC)
 
-    async def stop(self):
+    def stop(self):
         self.running = False
 
