@@ -64,7 +64,7 @@ def compute_atr(h: List[float], l: List[float], c: List[float], length: int) -> 
 # -----------------------------------
 class StrategyLoop:
     """
-    5m breakout + HTF 추세필터 + ATR/Volume 확장.
+    5m breakout + HTF(기본 30m) 추세필터 + ATR/Volume 확장.
     기능:
       - 동적 리스크(EQUITY/FREE 기반)  | env 토글
       - 마진체크 부족 시 qty 축소/스킵 | env 토글
@@ -378,7 +378,7 @@ class StrategyLoop:
                 dyn = await self._get_dynamic_risk_usd()
                 if dyn is not None and stop_preview > 0:
                     est_qty = max(dyn / stop_preview, MIN_BASE_QTY)
-                    logger.log("RISK", f"{symbol} dyn={dyn:.4f} stop={stop_preview:.6f} est_qty~{est_qty:.6f}")
+                    logger.info(f"[RISK] {symbol} dyn={dyn:.4f} stop={stop_preview:.6f} est_qty~{est_qty:.6f}")
             except Exception as e:
                 logger.warning(f"[RISK] preview failed: {e}")
 
@@ -401,9 +401,8 @@ class StrategyLoop:
         short_ok = all(conds_short)
 
         if STRAT_LOG_EVERY_BAR:
-            logger.log(
-                "BAR",
-                f"{symbol} tf={STRAT_TIMEFRAME} ts={l['ts']} px={price:.4f} "
+            logger.info(
+                f"[BAR] {symbol} tf={STRAT_TIMEFRAME} ts={l['ts']} px={price:.4f} "
                 f"ATR={l['atr']:.4f}/{l['atr_ma']:.4f} vol_ok={l['vol_ok']} "
                 f"LTF(L/S)=({l['trend_ltf_long']}/{l['trend_ltf_short']}) "
                 f"HTF(L/S)=({h['trend_htf_long']}/{h['trend_htf_short']}) "
@@ -428,12 +427,12 @@ class StrategyLoop:
                         if self.margin_adjust_mode == "shrink":
                             cap = (free / (price * (1.0 + self.margin_fee_buffer))) * max(STRAT_LEVERAGE, 1e-9)
                             if cap < MIN_BASE_QTY:
-                                logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> skip entry")
+                                logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> skip entry")
                                 return
                             qty = max(MIN_BASE_QTY, min(qty, cap))
-                            logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> shrink qty to {qty:.6f}")
+                            logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> shrink qty to {qty:.6f}")
                         else:
-                            logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> skip entry")
+                            logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> skip entry")
                             return
 
             try:
@@ -446,9 +445,8 @@ class StrategyLoop:
             self.sl_price[symbol] = price - stop_distance
             self.tp_price[symbol] = price + stop_distance * BRACKET_TP_RR
 
-            logger.log(
-                "ENTRY",
-                f"{symbol} LONG qty={qty:.6f} entry~{price:.4f} "
+            logger.info(
+                f"[ENTRY] {symbol} LONG qty={qty:.6f} entry~{price:.4f} "
                 f"SL={self.sl_price[symbol]:.4f} TP={self.tp_price[symbol]:.4f} "
                 f"stop={stop_distance:.4f} risk_used={(dyn_risk if dyn_risk is not None else RISK_USD):.4f} lev={STRAT_LEVERAGE}"
             )
@@ -459,7 +457,7 @@ class StrategyLoop:
                         symbol, "long", qty, self.sl_price[symbol], self.tp_price[symbol],
                         tp_as_market=BRACKET_TP_AS_MARKET, working_type=BRACKET_WORKING_TYPE,
                     )
-                    logger.log("BRACKET", f"{symbol} LONG placed (reduceOnly): SL={self.sl_price[symbol]:.4f}, TP={self.tp_price[symbol]:.4f}")
+                    logger.info(f"[BRACKET] {symbol} LONG placed (reduceOnly): SL={self.sl_price[symbol]:.4f}, TP={self.tp_price[symbol]:.4f}")
                 except Exception as e:
                     logger.warning(f"[BRACKET]{symbol} failed: {e}")
 
@@ -481,12 +479,12 @@ class StrategyLoop:
                         if self.margin_adjust_mode == "shrink":
                             cap = (free / (price * (1.0 + self.margin_fee_buffer))) * max(STRAT_LEVERAGE, 1e-9)
                             if cap < MIN_BASE_QTY:
-                                logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> skip entry")
+                                logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> skip entry")
                                 return
                             qty = max(MIN_BASE_QTY, min(qty, cap))
-                            logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> shrink qty to {qty:.6f}")
+                            logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> shrink qty to {qty:.6f}")
                         else:
-                            logger.log("MARGIN", f"insufficient free={free:.4f} need~{need:.4f} -> skip entry")
+                            logger.warning(f"[MARGIN] insufficient free={free:.4f} need~{need:.4f} -> skip entry")
                             return
 
             try:
@@ -499,9 +497,8 @@ class StrategyLoop:
             self.sl_price[symbol] = price + stop_distance
             self.tp_price[symbol] = price - stop_distance * BRACKET_TP_RR
 
-            logger.log(
-                "ENTRY",
-                f"{symbol} SHORT qty={qty:.6f} entry~{price:.4f} "
+            logger.info(
+                f"[ENTRY] {symbol} SHORT qty={qty:.6f} entry~{price:.4f} "
                 f"SL={self.sl_price[symbol]:.4f} TP={self.tp_price[symbol]:.4f} "
                 f"stop={stop_distance:.4f} risk_used={(dyn_risk if dyn_risk is not None else RISK_USD):.4f} lev={STRAT_LEVERAGE}"
             )
@@ -512,7 +509,7 @@ class StrategyLoop:
                         symbol, "short", qty, self.sl_price[symbol], self.tp_price[symbol],
                         tp_as_market=BRACKET_TP_AS_MARKET, working_type=BRACKET_WORKING_TYPE,
                     )
-                    logger.log("BRACKET", f"{symbol} SHORT placed (reduceOnly): SL={self.sl_price[symbol]:.4f}, TP={self.tp_price[symbol]:.4f}")
+                    logger.info(f"[BRACKET] {symbol} SHORT placed (reduceOnly): SL={self.sl_price[symbol]:.4f}, TP={self.tp_price[symbol]:.4f}")
                 except Exception as e:
                     logger.warning(f"[BRACKET]{symbol} failed: {e}")
 
@@ -526,7 +523,7 @@ class StrategyLoop:
                 if not (l["brk_long"] or l["brk_short"]): reasons.append("no_breakout")
                 if self.req_htf and not (h["trend_htf_long"] or h["trend_htf_short"]): reasons.append("no_HTF_trend")
                 if not (l["trend_ltf_long"] or l["trend_ltf_short"]): reasons.append("no_LTF_trend")
-                logger.log("NOENTRY", f"{symbol} reasons={','.join(reasons) or 'filtered'}")
+                logger.info(f"[NOENTRY] {symbol} reasons={','.join(reasons) or 'filtered'}")
 
         # if flat -> clear leftover reduceOnly
         if hasattr(self.engine, "cancel_reduces_if_flat"):
