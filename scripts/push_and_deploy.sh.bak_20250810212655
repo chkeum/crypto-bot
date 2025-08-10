@@ -9,16 +9,13 @@ cd "$ROOT"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 PR_BRANCH_PREFIX="${PR_BRANCH_PREFIX:-auto/deploy}"
 PR_TITLE_PREFIX="${PR_TITLE_PREFIX:-Auto Deploy}"
-PR_LABELS="${PR_LABELS:-auto,deploy}"          # 라벨 없으면 자동 생성
+PR_LABELS="${PR_LABELS:-auto,deploy}"          # ← 라벨 없으면 자동 생성
 PR_BODY="${PR_BODY:-Automated deploy via script}"
-PR_AUTO_MERGE="${PR_AUTO_MERGE:-1}"            # 1=가능하면 auto-merge 예약
+PR_AUTO_MERGE="${PR_AUTO_MERGE:-1}"            # 1=가능하면 자동 머지
 PR_MERGE_METHOD="${PR_MERGE_METHOD:-squash}"   # merge|squash|rebase
 DEPLOY_AFTER="${DEPLOY_AFTER:-merged}"         # merged|always|never
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-scripts/deploy_wsl.sh}"
 SKIP_GIT_PULL="${SKIP_GIT_PULL:-1}"
-
-# NEW: auto-merge 예약 후 즉시 머지 시도 (기본 ON)
-FORCE_IMMEDIATE_MERGE_AFTER_AUTO="${FORCE_IMMEDIATE_MERGE_AFTER_AUTO:-1}"
 
 echo "[push+deploy] repo: $ROOT"
 echo "[push+deploy] base branch: $BASE_BRANCH"
@@ -69,6 +66,7 @@ for l in "${_LBL[@]}"; do
   l_trim="$(echo "$l" | xargs)"
   [ -z "$l_trim" ] && continue
   if [ -n "$REPO_NWO" ]; then
+    # 생성 시도(이미 있으면 조용히 통과)
     gh label create "$l_trim" --repo "$REPO_NWO" --color BFD4F2 --description "auto-created" >/dev/null 2>&1 || true
   fi
   LABEL_ARGS+=(--label "$l_trim")
@@ -80,7 +78,7 @@ PR_OUT="$(gh pr create --base "$BASE_BRANCH" --head "$PR_BRANCH" --title "$TITLE
 PR_EXIT=$?
 set -e
 
-# 라벨 문제 등으로 실패하면 라벨 없이 재시도
+# 라벨 문제로 실패하면 라벨 없이 재시도(호환성)
 if [ $PR_EXIT -ne 0 ]; then
   echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
   echo "[push+deploy] WARN: PR with labels failed → retry without labels"
@@ -114,19 +112,8 @@ if [ "${PR_AUTO_MERGE}" = "1" ]; then
   MERGE_FLAG="--${PR_MERGE_METHOD}"
   if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --auto --delete-branch >/dev/null 2>&1; then
     echo "[push+deploy] auto-merge scheduled (will merge when checks pass)"
-    # NEW: 예약 성공 후에도 즉시 머지 한 번 더 시도(보호 규칙 없으면 바로 머지됨)
-    if [ "${FORCE_IMMEDIATE_MERGE_AFTER_AUTO}" = "1" ]; then
-      echo "[push+deploy] try immediate merge right now..."
-      if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch >/dev/null 2>&1; then
-        MERGED=1
-        echo "[push+deploy] merged PR #$PR_NUMBER (immediate)"
-      else
-        echo "[push+deploy] immediate merge not allowed (waiting on checks or branch protection)"
-      fi
-    fi
   else
     echo "[push+deploy] auto-merge not set/failed → try immediate merge..."
-    MERGE_FLAG="--${PR_MERGE_METHOD}"
     if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch; then
       MERGED=1
       echo "[push+deploy] merged PR #$PR_NUMBER"
