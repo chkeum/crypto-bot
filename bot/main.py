@@ -7,6 +7,8 @@ from typing import Optional
 
 from fastapi import FastAPI, Request, Depends, Header, Query, HTTPException, APIRouter
 from loguru import logger
+from .colored_logging import setup as _setup_logging
+_setup_logging()
 
 from .config import (
     START_MODE,
