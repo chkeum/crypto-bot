@@ -14,8 +14,15 @@ PR_MERGE_METHOD="${PR_MERGE_METHOD:-squash}"
 DEPLOY_AFTER="${DEPLOY_AFTER:-merged}"
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-scripts/deploy_wsl.sh}"
 SKIP_GIT_PULL="${SKIP_GIT_PULL:-1}"
+<<<<<<< HEAD
 FORCE_IMMEDIATE_MERGE_AFTER_AUTO="${FORCE_IMMEDIATE_MERGE_AFTER_AUTO:-1}"
 REBASE_BEFORE_PR="${REBASE_BEFORE_PR:-1}"
+=======
+
+# NEW
+FORCE_IMMEDIATE_MERGE_AFTER_AUTO="${FORCE_IMMEDIATE_MERGE_AFTER_AUTO:-1}"  # auto 예약 후 즉시 머지 시도
+REBASE_BEFORE_PR="${REBASE_BEFORE_PR:-1}"                                   # PR 전 rebase (충돌 방지)
+>>>>>>> 3192b59 (auto deploy)
 
 echo "[push+deploy] repo: $ROOT"
 echo "[push+deploy] base branch: $BASE_BRANCH"
@@ -45,6 +52,28 @@ if [ "${REBASE_BEFORE_PR}" = "1" ]; then
     echo "  # or: git rebase --abort"; exit 2; fi
 fi
 
+<<<<<<< HEAD
+=======
+# --- NEW: PR 만들기 전 main 위로 rebase (충돌 확률↓) ---
+if [ "${REBASE_BEFORE_PR}" = "1" ]; then
+  git fetch origin "$BASE_BRANCH" --quiet
+  echo "[push+deploy] rebase onto origin/$BASE_BRANCH"
+  set +e
+  git rebase "origin/$BASE_BRANCH"
+  REB=$?
+  set -e
+  if [ $REB -ne 0 ]; then
+    echo "[push+deploy] Rebase conflict. Resolve and re-run:"
+    echo "  git status"
+    echo "  # 충돌 파일 수정 후"
+    echo "  git add <files> && git rebase --continue"
+    echo "  # 또는 되돌리기: git rebase --abort"
+    exit 2
+  fi
+fi
+
+# base와 diff 없으면 종료
+>>>>>>> 3192b59 (auto deploy)
 git fetch origin "$BASE_BRANCH" --quiet
 if git diff --quiet "origin/$BASE_BRANCH"...HEAD ; then
   echo "[push+deploy] no diff against $BASE_BRANCH → nothing to PR. exit."; exit 0; fi
@@ -85,6 +114,10 @@ if [ "${PR_AUTO_MERGE}" = "1" ]; then
   echo "[push+deploy] try auto-merge (method=$PR_MERGE_METHOD)"; MERGE_FLAG="--${PR_MERGE_METHOD}"
   if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --auto --delete-branch >/dev/null 2>&1; then
     echo "[push+deploy] auto-merge scheduled (will merge when checks pass)"
+<<<<<<< HEAD
+=======
+    # 예약 성공 후 즉시 머지 시도(보호 규칙 없으면 바로 머지)
+>>>>>>> 3192b59 (auto deploy)
     if [ "${FORCE_IMMEDIATE_MERGE_AFTER_AUTO}" = "1" ]; then
       echo "[push+deploy] try immediate merge right now..."
       if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch >/dev/null 2>&1; then MERGED=1; echo "[push+deploy] merged PR #$PR_NUMBER (immediate)"
@@ -92,11 +125,21 @@ if [ "${PR_AUTO_MERGE}" = "1" ]; then
     fi
   else
     echo "[push+deploy] auto-merge not set/failed → try immediate merge..."
+<<<<<<< HEAD
     if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch; then MERGED=1; echo "[push+deploy] merged PR #$PR_NUMBER"
     else echo "[push+deploy] merge failed (branch protection or required checks)"; fi
+=======
+    if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch; then
+      MERGED=1
+      echo "[push+deploy] merged PR #$PR_NUMBER"
+    else
+      echo "[push+deploy] merge failed (branch protection or required checks)"
+    fi
+>>>>>>> 3192b59 (auto deploy)
   fi
 fi
 
+# 배포 정책
 do_deploy=0
 case "$DEPLOY_AFTER" in merged) [ "$MERGED" = "1" ] && do_deploy=1 ;; always) do_deploy=1 ;; never) do_deploy=0 ;; esac
 if [ "$do_deploy" = "1" ]; then
