@@ -9,17 +9,17 @@ cd "$ROOT"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 PR_BRANCH_PREFIX="${PR_BRANCH_PREFIX:-auto/deploy}"
 PR_TITLE_PREFIX="${PR_TITLE_PREFIX:-Auto Deploy}"
-PR_LABELS="${PR_LABELS:-auto,deploy}"
+PR_LABELS="${PR_LABELS:-auto,deploy}"          # 라벨 없으면 자동 생성
 PR_BODY="${PR_BODY:-Automated deploy via script}"
-PR_AUTO_MERGE="${PR_AUTO_MERGE:-1}"
+PR_AUTO_MERGE="${PR_AUTO_MERGE:-1}"            # 1=가능하면 auto-merge 예약
 PR_MERGE_METHOD="${PR_MERGE_METHOD:-squash}"   # merge|squash|rebase
 DEPLOY_AFTER="${DEPLOY_AFTER:-merged}"         # merged|always|never
 DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-scripts/deploy_wsl.sh}"
 SKIP_GIT_PULL="${SKIP_GIT_PULL:-1}"
 
 # NEW
-FORCE_IMMEDIATE_MERGE_AFTER_AUTO="${FORCE_IMMEDIATE_MERGE_AFTER_AUTO:-1}"
-REBASE_BEFORE_PR="${REBASE_BEFORE_PR:-1}"
+FORCE_IMMEDIATE_MERGE_AFTER_AUTO="${FORCE_IMMEDIATE_MERGE_AFTER_AUTO:-1}"  # auto 예약 후 즉시 머지 시도
+REBASE_BEFORE_PR="${REBASE_BEFORE_PR:-1}"                                   # PR 전 rebase (충돌 방지)
 
 echo "[push+deploy] repo: $ROOT"
 echo "[push+deploy] base branch: $BASE_BRANCH"
@@ -37,7 +37,7 @@ git remote -v | grep -q '^origin' || { echo "[push+deploy] ERROR: no 'origin' re
 CUR_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 echo "[push+deploy] current branch: $CUR_BRANCH"
 
-# commit local changes
+# 변경사항 커밋
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "[push+deploy] changes detected → commit"
   git add -A
@@ -46,8 +46,7 @@ else
   echo "[push+deploy] no local changes"
 fi
 
-<<<<<<< HEAD
-# rebase onto base before PR (reduce conflicts)
+# --- PR 만들기 전 main 위로 rebase (충돌 확률↓) ---
 if [ "${REBASE_BEFORE_PR}" = "1" ]; then
   git fetch origin "$BASE_BRANCH" --quiet
   echo "[push+deploy] rebase onto origin/$BASE_BRANCH"
@@ -58,15 +57,14 @@ if [ "${REBASE_BEFORE_PR}" = "1" ]; then
   if [ $REB -ne 0 ]; then
     echo "[push+deploy] Rebase conflict. Resolve and re-run:"
     echo "  git status"
+    echo "  # 충돌 파일 수정 후"
     echo "  git add <files> && git rebase --continue"
-    echo "  # or: git rebase --abort"
+    echo "  # 또는 되돌리기: git rebase --abort"
     exit 2
   fi
 fi
 
-=======
 # base와 diff 없으면 종료
->>>>>>> 3c7162d (auto deploy)
 git fetch origin "$BASE_BRANCH" --quiet
 if git diff --quiet "origin/$BASE_BRANCH"...HEAD ; then
   echo "[push+deploy] no diff against $BASE_BRANCH → nothing to PR. exit."
@@ -82,7 +80,7 @@ SHORT_SHA="$(git rev-parse --short HEAD)"
 TITLE="${PR_TITLE_PREFIX} ${TS} (${SHORT_SHA})"
 BODY="${PR_BODY}\n\nBase: ${BASE_BRANCH}\nHead: ${PR_BRANCH}\nSHA: ${SHORT_SHA}"
 
-# labels (auto-create if missing)
+# ----- 라벨 준비: 없으면 자동 생성 -----
 LABEL_ARGS=()
 REPO_NWO="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)"
 IFS=',' read -ra _LBL <<<"$PR_LABELS"
@@ -96,16 +94,13 @@ for l in "${_LBL[@]}"; do
 done
 
 echo "[push+deploy] creating PR → ${BASE_BRANCH} <= ${PR_BRANCH}"
-<<<<<<< HEAD
-=======
-# NOTE: 일부 gh 버전은 'gh pr create --json' 미지원 → stdout 받아서 이후 조회
->>>>>>> 3c7162d (auto deploy)
 set +e
 PR_OUT="$(gh pr create --base "$BASE_BRANCH" --head "$PR_BRANCH" --title "$TITLE" --body "$BODY" "${LABEL_ARGS[@]}")"
 PR_EXIT=$?
 set -e
+
+# 라벨 문제 등으로 실패하면 라벨 없이 재시도
 if [ $PR_EXIT -ne 0 ]; then
-<<<<<<< HEAD
   echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
   echo "[push+deploy] WARN: PR with labels failed → retry without labels"
   set +e
@@ -120,32 +115,16 @@ if [ $PR_EXIT -ne 0 ]; then
 fi
 echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
 
+# URL/번호 조회
 PR_URL="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)"
 PR_NUMBER="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)"
 if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
-=======
-  echo "$PR_OUT"
-  echo "[push+deploy] ERROR: failed to create PR"
-  exit 1
-fi
-echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
-
-# URL/번호 재조회 (호환성 보장)
-PR_URL="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)"
-PR_NUMBER="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)"
-if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
-  # 마지막 시도: stdout에서 URL 추출 → view로 번호 조회
->>>>>>> 3c7162d (auto deploy)
   PR_URL="$(echo "$PR_OUT" | grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' | head -n1 || true)"
   if [ -n "$PR_URL" ]; then
     PR_NUMBER="$(gh pr view "$PR_URL" --json number --jq '.number' 2>/dev/null || true)"
   fi
 fi
 [ -n "${PR_NUMBER:-}" ] && [ "$PR_NUMBER" != "null" ] || { echo "[push+deploy] ERROR: cannot determine PR number"; exit 1; }
-<<<<<<< HEAD
-=======
-
->>>>>>> 3c7162d (auto deploy)
 echo "[push+deploy] created PR #$PR_NUMBER → ${PR_URL:-"(use gh pr view $PR_NUMBER)"}"
 
 MERGED=0
@@ -154,6 +133,7 @@ if [ "${PR_AUTO_MERGE}" = "1" ]; then
   MERGE_FLAG="--${PR_MERGE_METHOD}"
   if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --auto --delete-branch >/dev/null 2>&1; then
     echo "[push+deploy] auto-merge scheduled (will merge when checks pass)"
+    # 예약 성공 후 즉시 머지 시도(보호 규칙 없으면 바로 머지)
     if [ "${FORCE_IMMEDIATE_MERGE_AFTER_AUTO}" = "1" ]; then
       echo "[push+deploy] try immediate merge right now..."
       if gh pr merge "$PR_NUMBER" "$MERGE_FLAG" --delete-branch >/dev/null 2>&1; then
@@ -174,6 +154,7 @@ if [ "${PR_AUTO_MERGE}" = "1" ]; then
   fi
 fi
 
+# 배포 정책
 do_deploy=0
 case "$DEPLOY_AFTER" in
   merged) [ "$MERGED" = "1" ] && do_deploy=1 ;;
