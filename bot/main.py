@@ -4,7 +4,7 @@ import os
 import asyncio
 from typing import Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends, Header, Query, HTTPException, APIRouter
 from loguru import logger
 
 from .config import (
@@ -100,8 +100,6 @@ async def _on_shutdown():
         logger.info("[MAIN] strategy loop stopped")
 
 # --- compat endpoints: /status, /orders (for existing scripts) ---
-from fastapi import Query, HTTPException
-from fastapi import Depends, Header, Query, HTTPException
 
 try:
     WEBHOOK_TOKEN  # may already be imported
@@ -154,3 +152,53 @@ def _compat_auth_guard(request: Request,
     supplied = x_token or token
     if supplied != WEBHOOK_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+router = APIRouter()
+
+def _parse_symbols(symbols: str | None, symbol: str | None) -> list[str]:
+    raw = symbols or symbol or ""
+    return [s.strip() for s in raw.split(",") if s.strip()] or STRAT_SYMBOLS
+
+@router.get("/status")
+def http_status(
+    symbols: str | None = Query(None),
+    symbol: str | None = Query(None),  # alias
+    _ : None = Depends(_compat_auth_guard),
+):
+    syms = _parse_symbols(symbols, symbol)
+    return {
+        "ok": True,
+        "engine": type(engine).__name__,
+        "mode": START_MODE,
+        "strategy": {
+            "enabled": bool(STRAT_ENABLE),
+            "running": bool(_strat_task and not _strat_task.cancelled()),
+        },
+        "symbols": syms,
+    }
+
+import inspect
+async def _maybe_call(func, *args, **kwargs):
+    res = func(*args, **kwargs)
+    if inspect.isawaitable(res):
+        res = await res
+    return res
+
+@router.get("/orders")
+async def http_orders(
+    symbol: str = Query(..., description="e.g. ETH/USDT:USDT"),
+    _ : None = Depends(_compat_auth_guard),
+):
+    # Try a few common method names; fallback to []
+    orders = []
+    for name in ("get_open_orders", "open_orders", "fetch_open_orders", "list_open_orders"):
+        if hasattr(engine, name):
+            try:
+                orders = await _maybe_call(getattr(engine, name), symbol)
+            except Exception as e:
+                logger.warning(f"[ORDERS] call {name} failed: {e}")
+            break
+    return {"ok": True, "symbol": symbol, "orders": orders}
+
+# 라우터 등록
+app.include_router(router)
