@@ -46,6 +46,7 @@ else
   echo "[push+deploy] no local changes"
 fi
 
+<<<<<<< HEAD
 # rebase onto base before PR (reduce conflicts)
 if [ "${REBASE_BEFORE_PR}" = "1" ]; then
   git fetch origin "$BASE_BRANCH" --quiet
@@ -63,6 +64,9 @@ if [ "${REBASE_BEFORE_PR}" = "1" ]; then
   fi
 fi
 
+=======
+# base와 diff 없으면 종료
+>>>>>>> 3c7162d (auto deploy)
 git fetch origin "$BASE_BRANCH" --quiet
 if git diff --quiet "origin/$BASE_BRANCH"...HEAD ; then
   echo "[push+deploy] no diff against $BASE_BRANCH → nothing to PR. exit."
@@ -92,11 +96,16 @@ for l in "${_LBL[@]}"; do
 done
 
 echo "[push+deploy] creating PR → ${BASE_BRANCH} <= ${PR_BRANCH}"
+<<<<<<< HEAD
+=======
+# NOTE: 일부 gh 버전은 'gh pr create --json' 미지원 → stdout 받아서 이후 조회
+>>>>>>> 3c7162d (auto deploy)
 set +e
 PR_OUT="$(gh pr create --base "$BASE_BRANCH" --head "$PR_BRANCH" --title "$TITLE" --body "$BODY" "${LABEL_ARGS[@]}")"
 PR_EXIT=$?
 set -e
 if [ $PR_EXIT -ne 0 ]; then
+<<<<<<< HEAD
   echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
   echo "[push+deploy] WARN: PR with labels failed → retry without labels"
   set +e
@@ -114,12 +123,29 @@ echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
 PR_URL="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)"
 PR_NUMBER="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)"
 if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+=======
+  echo "$PR_OUT"
+  echo "[push+deploy] ERROR: failed to create PR"
+  exit 1
+fi
+echo "$PR_OUT" | sed 's/.*/[push+deploy] PR OUT: &/'
+
+# URL/번호 재조회 (호환성 보장)
+PR_URL="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)"
+PR_NUMBER="$(gh pr list --head "$PR_BRANCH" --state all --limit 1 --json number --jq '.[0].number' 2>/dev/null || true)"
+if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+  # 마지막 시도: stdout에서 URL 추출 → view로 번호 조회
+>>>>>>> 3c7162d (auto deploy)
   PR_URL="$(echo "$PR_OUT" | grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' | head -n1 || true)"
   if [ -n "$PR_URL" ]; then
     PR_NUMBER="$(gh pr view "$PR_URL" --json number --jq '.number' 2>/dev/null || true)"
   fi
 fi
 [ -n "${PR_NUMBER:-}" ] && [ "$PR_NUMBER" != "null" ] || { echo "[push+deploy] ERROR: cannot determine PR number"; exit 1; }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 3c7162d (auto deploy)
 echo "[push+deploy] created PR #$PR_NUMBER → ${PR_URL:-"(use gh pr view $PR_NUMBER)"}"
 
 MERGED=0
