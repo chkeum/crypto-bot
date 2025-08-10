@@ -200,5 +200,37 @@ async def http_orders(
             break
     return {"ok": True, "symbol": symbol, "orders": orders}
 
+@router.get("/positions")
+async def http_positions(
+    symbols: str | None = Query(None),
+    symbol: str | None = Query(None),
+    _ : None = Depends(_compat_auth_guard),
+):
+    syms = _parse_symbols(symbols, symbol)
+    out = {}
+    for s in syms:
+        pos = None
+        for name in ("get_position", "position", "fetch_position"):
+            if hasattr(engine, name):
+                try:
+                    pos = await _maybe_call(getattr(engine, name), s)
+                    break
+                except Exception as e:
+                    logger.warning(f"[POSITIONS] {name}({s}) failed: {e}")
+        if pos is None:
+            for name in ("get_positions", "fetch_positions", "positions", "list_positions"):
+                if hasattr(engine, name):
+                    try:
+                        bulk = await _maybe_call(getattr(engine, name))
+                        if isinstance(bulk, list):
+                            pos = next((p for p in bulk if p.get("symbol") == s), None)
+                        elif isinstance(bulk, dict):
+                            pos = bulk.get(s) or bulk.get(s.replace("/", ""))
+                    except Exception as e:
+                        logger.warning(f"[POSITIONS] bulk {name} failed: {e}")
+                    break
+        out[s] = pos
+    return {"ok": True, "positions": out}
+
 # 라우터 등록
 app.include_router(router)
