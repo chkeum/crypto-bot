@@ -35,13 +35,13 @@ echo "[deploy] kill old tmux session: bot"
 tmux kill-session -t bot 2>/dev/null || true
 
 echo "[deploy] start tmux session: bot"
-tmux new-session -d -s bot "bash -lc 'export PYTHONUNBUFFERED=1; source .venv/bin/activate; if [[ -f .env ]]; then set -a; source .env; set +a; fi; stdbuf -oL -eL uvicorn bot.main:app --host 127.0.0.1 --port 8000 2>&1 | stdbuf -oL -eL tee -a \"$LOGFILE\"'"
+tmux new-session -d -s bot "bash -lc 'export PYTHONUNBUFFERED=1; source .venv/bin/activate; if [[ -f .env ]]; then set -a; source .env; set +a; fi; stdbuf -oL -eL uvicorn bot.main:app --host 0.0.0.0 --port 8000 2>&1 | stdbuf -oL -eL tee -a \"$LOGFILE\"'"
 
 echo "[deploy] health check..."
 ok=0
 for i in {1..30}; do
   if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
-    echo "[deploy] OK: http://127.0.0.1:8000/health"
+    echo "[deploy] OK: http://0.0.0.0:80/health"
     ok=1; break
   fi
   sleep 1
