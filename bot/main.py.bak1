@@ -1,16 +1,12 @@
-# bot/main.py
 from __future__ import annotations
 
 import os
 import asyncio
 import inspect
-from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request, Depends, Header, Query, HTTPException, APIRouter
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
-
 from .colored_logging import setup as _setup_logging
 _setup_logging()
 
@@ -102,8 +98,7 @@ async def _on_shutdown():
     if _strat_task:
         try:
             if _strat and hasattr(_strat, "stop"):
-                # stop()이 async면 await이 이상적이지만, 기존 호환을 위해 동기 호출 유지
-                _strat.stop()  # type: ignore
+                _strat.stop()
             _strat_task.cancel()
         except Exception:
             pass
@@ -243,6 +238,13 @@ async def http_orders(
 
 # ---- positions (all) ---------------------------------------------------------
 
+def _sym_to_binance(sym: str) -> str:
+    # "XRP/USDT:USDT" -> "XRPUSDT"
+    if not sym:
+        return sym
+    return sym.split(":")[0].replace("/", "")
+
+
 def _norm_usdm_symbol(sym: str | None) -> str | None:
     if not sym:
         return sym
@@ -322,8 +324,8 @@ async def _fetch_all_positions():
             except Exception as e:
                 logger.warning(f"[POSITIONS] bulk call {name} failed: {e}")
 
-    # 2) CCXT 스타일: engine.exchange.fetch_positions() or engine.ex.fetch_positions()
-    ex = getattr(engine, "exchange", None) or getattr(engine, "ex", None)
+    # 2) CCXT 스타일: engine.exchange.fetch_positions()
+    ex = getattr(engine, "exchange", None)
     if ex and hasattr(ex, "fetch_positions"):
         try:
             res = await _maybe_call(ex.fetch_positions)
@@ -413,70 +415,4 @@ async def http_positions(
 
 # --- mount compat router ------------------------------------------------------
 app.include_router(router)
-
-# =============================================================================
-# Simple UI + Strategy control endpoints
-# =============================================================================
-
-ui_router = APIRouter()
-
-
-@ui_router.get("/strategy")
-def http_strategy_state(_: None = Depends(_compat_auth_guard)):
-    running = bool(_strat_task and not _strat_task.cancelled())
-    return {
-        "ok": True,
-        "running": running,
-        "symbols": [s.strip() for s in _as_list_symbols(STRAT_SYMBOLS) if s.strip()],
-        "engine": type(engine).__name__,
-        "mode": START_MODE,
-    }
-
-
-@ui_router.post("/strategy/start")
-async def http_strategy_start(_: None = Depends(_compat_auth_guard)):
-    global _strat, _strat_task
-    if _strat_task and not _strat_task.cancelled():
-        return {"ok": True, "running": True, "msg": "already running"}
-    _strat = StrategyLoop(engine=engine)
-    _strat_task = asyncio.create_task(_strat.run())
-    logger.info("[MAIN] strategy loop started (via /strategy/start)")
-    return {"ok": True, "running": True}
-
-
-@ui_router.post("/strategy/stop")
-async def http_strategy_stop(_: None = Depends(_compat_auth_guard)):
-    global _strat, _strat_task
-    if not _strat_task:
-        return {"ok": True, "running": False, "msg": "not running"}
-    try:
-        if _strat and hasattr(_strat, "stop"):
-            # stop이 async일 수 있어 await 처리
-            maybe = _strat.stop()
-            if inspect.isawaitable(maybe):
-                await maybe  # type: ignore
-    except Exception:
-        pass
-    try:
-        _strat_task.cancel()
-    except Exception:
-        pass
-    _strat_task = None
-    _strat = None
-    logger.info("[MAIN] strategy loop stopped (via /strategy/stop)")
-    return {"ok": True, "running": False}
-
-
-app.include_router(ui_router)
-
-# /ui 정적 파일 서빙 (bot/webui 디렉토리)
-try:
-    UI_DIR = Path(__file__).resolve().parent / "webui"
-    if UI_DIR.exists():
-        app.mount("/ui", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
-        logger.info(f"[UI] mounted at /ui (dir={UI_DIR})")
-    else:
-        logger.info(f"[UI] directory not found: {UI_DIR} (skip mount)")
-except Exception as _e:
-    logger.warning(f"[UI] mount failed: {_e}")
 
