@@ -221,11 +221,11 @@ def setup_restore_watch(app, engine, interval_sec: int = 60) -> None:
             while True:
                 try:
                     await asyncio.to_thread(_restore_once, engine)
+                    await asyncio.sleep(interval_sec)
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
                     logger.warning(f"[RESTORE] periodic failed: {e}")
-                await asyncio.sleep(interval_sec)
 
         _watch_task = asyncio.create_task(_loop(), name="restore_watch")
 
@@ -235,6 +235,8 @@ def setup_restore_watch(app, engine, interval_sec: int = 60) -> None:
             _watch_task.cancel()
             try:
                 await _watch_task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
             _watch_task = None
