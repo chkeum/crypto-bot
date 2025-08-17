@@ -1,6 +1,1 @@
-fastapi
-uvicorn[standard]
-ccxt
-python-dotenv
-pydantic
-loguru
+python-binance
